@@ -7,16 +7,18 @@ import { DatasetBrowser } from "./components/DatasetBrowser";
 import { Simulation } from "./components/Simulation";
 import { Analytics } from "./components/Analytics";
 import { PlaybackChart } from "./components/PlaybackChart";
+import { IndicatorLab } from "./components/IndicatorLab";
 import { Dataset } from "./types/market";
 import "./styles/globals.css";
 
-type Section = "data-sync" | "datasets" | "simulation" | "analytics" | "strategies" | "reports";
+type Section = "data-sync" | "datasets" | "simulation" | "analytics" | "indicators" | "strategies" | "reports";
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentSection, setCurrentSection] = useState<Section>("data-sync");
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null);
   const [isPlaybackView, setIsPlaybackView] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const handleLogin = () => {
     setIsAuthenticated(true);
@@ -25,6 +27,7 @@ export default function App() {
   const handleOpenDataset = (dataset: Dataset) => {
     setSelectedDataset(dataset);
     setIsPlaybackView(true);
+    setIsSidebarOpen(false);
   };
 
   const handleBackToBrowser = () => {
@@ -36,6 +39,7 @@ export default function App() {
     setCurrentSection(section as Section);
     setIsPlaybackView(false);
     setSelectedDataset(null);
+    setIsSidebarOpen(false);
   };
 
   const getSectionTitle = () => {
@@ -48,6 +52,8 @@ export default function App() {
         return "Simulation";
       case "analytics":
         return "Analytics";
+      case "indicators":
+        return "Indicators";
       case "strategies":
         return "Strategies";
       case "reports":
@@ -72,15 +78,33 @@ export default function App() {
 
   return (
     <div className="h-screen bg-[var(--bg-app)] flex flex-col">
-      <Navigation title={getSectionTitle()} breadcrumb={getSectionTitle()} />
+      <Navigation
+        title={getSectionTitle()}
+        breadcrumb={getSectionTitle()}
+        onMenuToggle={() => setIsSidebarOpen((open) => !open)}
+        isMenuOpen={isSidebarOpen}
+      />
       
-      <div className="flex-1 flex overflow-hidden">
-        <LeftSidebar currentSection={currentSection} onSectionChange={handleSectionChange} />
+      <div className="flex-1 flex overflow-hidden relative">
+        <LeftSidebar
+          currentSection={currentSection}
+          onSectionChange={handleSectionChange}
+          isMobileOpen={isSidebarOpen}
+          onCloseMobile={() => setIsSidebarOpen(false)}
+        />
+        {isSidebarOpen && (
+          <button
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 lg:hidden"
+            aria-label="Close navigation"
+            onClick={() => setIsSidebarOpen(false)}
+          />
+        )}
         
         {currentSection === "data-sync" && <DataSync />}
         {currentSection === "datasets" && <DatasetBrowser onOpenDataset={handleOpenDataset} />}
         {currentSection === "simulation" && <Simulation />}
         {currentSection === "analytics" && <Analytics />}
+        {currentSection === "indicators" && <IndicatorLab />}
         {currentSection === "strategies" && (
           <div className="flex-1 p-6 space-y-6 overflow-auto">
             <div>

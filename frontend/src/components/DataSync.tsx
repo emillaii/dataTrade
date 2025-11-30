@@ -108,9 +108,9 @@ export function DataSync() {
   };
 
   return (
-    <div className="flex-1 p-6 space-y-6 overflow-auto">
+    <div className="flex-1 p-4 sm:p-6 space-y-6 overflow-auto">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-3xl text-[var(--text-primary)] mb-2 font-cyber glow-primary">DATA SYNC</h1>
           <p className="text-sm text-[var(--text-secondary)] font-mono-cyber">
@@ -135,7 +135,7 @@ export function DataSync() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           <div className="space-y-2">
             <Label className="text-[var(--text-secondary)] text-xs">S3 Bucket Name</Label>
             <Input
@@ -179,7 +179,7 @@ export function DataSync() {
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
           <div className="space-y-2">
             <Label className="text-[var(--text-secondary)] text-xs">Symbol</Label>
             <Select value={symbol} onValueChange={setSymbol}>
@@ -257,7 +257,7 @@ export function DataSync() {
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-4 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
           <div className="space-y-2">
             <Label className="text-[var(--text-secondary)] text-xs">Symbol</Label>
             <Input
@@ -313,7 +313,7 @@ export function DataSync() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <Button
             onClick={async () => {
               if (!file) {
@@ -367,7 +367,7 @@ export function DataSync() {
         <div className="divide-y divide-[var(--border-subtle)]">
           {syncJobs.map((job) => (
             <div key={job.id} className="p-6">
-              <div className="flex items-start justify-between mb-4">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between mb-4">
                 <div className="flex items-start gap-4">
                   {getStatusIcon(job.status)}
                   <div>

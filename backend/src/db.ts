@@ -1,7 +1,7 @@
 import { Pool } from "pg";
 import type { PoolClient } from "pg";
 import dotenv from "dotenv";
-import type { BarEvent, Dataset } from "./types";
+import type { BarEvent, Dataset } from "./types.js";
 
 dotenv.config();
 
@@ -170,7 +170,7 @@ export async function listDatasets(filters: DatasetFilters = {}) {
 
   const res = await pool.query(sql, params);
   const total = res.rows[0]?.total ?? 0;
-  const datasets = res.rows.map((row) => {
+  const datasets = res.rows.map((row: Dataset & { total?: number }) => {
     const { total: _, ...rest } = row;
     return rest as Dataset;
   });
@@ -250,7 +250,7 @@ export async function fetchBars(params: BarsQuery) {
   const res = await pool.query(sql, values);
   const rows = res.rows as BarEvent[];
   const seen = new Set<number>();
-  const unique = [];
+  const unique: BarEvent[] = [];
   for (const row of rows) {
     if (seen.has(row.timestamp)) continue;
     seen.add(row.timestamp);

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { BarEvent, Dataset, MarketEvent } from "../types/market";
+import { BarEvent, Dataset, MarketEvent, IndicatorResult } from "../types/market";
+import type { IndicatorSpec } from "../types/indicator";
 
 export type PlaybackStatus = "idle" | "connecting" | "playing" | "paused" | "error" | "disconnected";
+type StreamTransport = "playback" | "candles";
 type PlaybackMode = "ws" | "local";
 
 interface PlaybackState {
@@ -10,12 +12,15 @@ interface PlaybackState {
   cursor?: number;
   error?: string | null;
   mode: PlaybackMode;
+  transport: StreamTransport;
   loadedBars: number;
+  indicators?: IndicatorResult[];
 }
 
 interface PlaybackSessionResult extends PlaybackState {
   bars: BarEvent[];
   events: MarketEvent[];
+  indicators?: IndicatorResult[];
   play: () => void;
   pause: () => void;
   setSpeed: (speed: number) => void;
@@ -23,21 +28,56 @@ interface PlaybackSessionResult extends PlaybackState {
   step: (direction: "forward" | "backward", size?: number) => void;
 }
 
-const buildWsUrl = () => {
-  const envUrl = import.meta.env.VITE_API_WS_URL as string | undefined;
-  if (envUrl) return envUrl;
+const buildWsConfig = (
+  dataset: Dataset,
+  speed: number,
+  indicators: IndicatorSpec[] = []
+): { url: string; transport: StreamTransport } => {
+  const streamBase = import.meta.env.VITE_DATA_STREAM_WS_URL as string | undefined;
+  if (streamBase) {
+    const sanitized = streamBase.replace(/\/+$/, "");
+    const withPath = /\/ws(\/|$)/i.test(sanitized) ? sanitized : `${sanitized}/ws/candles`;
+    const wsBase = withPath.startsWith("ws") ? withPath : withPath.replace(/^http/, "ws");
+    const params = new URLSearchParams({
+      symbol: dataset.symbol,
+      timeframe: dataset.timeframe,
+      datasetId: dataset.id,
+      batch: "1000",
+      speed: String(speed || 1)
+    });
+    if (indicators.length > 0) {
+      params.set("indicators", JSON.stringify(indicators));
+    }
+    if (Number.isFinite(dataset.startTime)) {
+      params.set("after", String(Math.max(Number(dataset.startTime) - 1, 0)));
+    }
+    return {
+      url: `${wsBase}?${params.toString()}`,
+      transport: "candles"
+    };
+  }
+
+  const explicit = import.meta.env.VITE_API_WS_URL as string | undefined;
+  if (explicit) {
+    const trimmed = explicit.replace(/\/+$/, "");
+    // If caller already provided a full ws path, use as-is; otherwise append playback path.
+    const url = /\/ws(\/|$)/i.test(new URL(trimmed, "http://placeholder").pathname)
+      ? trimmed
+      : `${trimmed}/ws/playback`;
+    return { url, transport: "playback" };
+  }
 
   const apiBase = import.meta.env.VITE_API_URL as string | undefined;
   if (apiBase) {
     const sanitized = apiBase.replace(/\/+$/, "");
-    return sanitized.replace(/^http/, "ws") + "/ws/playback";
+    return { url: sanitized.replace(/^http/, "ws") + "/ws/playback", transport: "playback" };
   }
 
   const origin = window.location.origin.replace(/^http/, "ws");
-  return `${origin}/ws/playback`;
+  return { url: `${origin}/ws/playback`, transport: "playback" };
 };
 
-export function usePlaybackSession(dataset: Dataset): PlaybackSessionResult {
+export function usePlaybackSession(dataset: Dataset, indicatorSpecs: IndicatorSpec[] = []): PlaybackSessionResult {
   const normalizeTimestamp = (value: any) => {
     const toMs = (n: number) => (n < 1e12 ? n * 1000 : n); // accept seconds or ms
     if (typeof value === "number" && Number.isFinite(value)) return toMs(value);
@@ -51,168 +91,162 @@ export function usePlaybackSession(dataset: Dataset): PlaybackSessionResult {
   };
 
   const socketRef = useRef<WebSocket | null>(null);
+  const transportRef = useRef<StreamTransport>("playback");
+  const pausedRef = useRef<boolean>(false);
+  const bufferedBarsRef = useRef<BarEvent[]>([]);
+  const flushBufferedBarsRef = useRef<() => void>(() => {});
   const [bars, setBars] = useState<BarEvent[]>([]);
   const [events, setEvents] = useState<MarketEvent[]>([]);
-  const [localBars, setLocalBars] = useState<BarEvent[]>([]);
   const receivedCountRef = useRef<number>(0);
-  const localIndexRef = useRef<number>(0);
-  const localTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [state, setState] = useState<PlaybackState>({
     status: "idle",
     speed: 1,
     cursor: dataset.startTime,
     error: null,
     mode: "ws",
+    transport: "playback",
     loadedBars: 0
   });
 
-  useEffect(() => {
-    const apiBase = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, "") ?? "";
-    const maxBars = Number.isFinite(dataset.rows) ? Math.max(1000, dataset.rows + 100) : 10000;
+  const stopLocalTimer = () => {};
 
-    // Preload bars so we can fall back to local playback if websocket isn't available
-    const controller = new AbortController();
-    const loadLocalBars = async () => {
-      try {
-        const chunkSize = 1000;
-        const collected: BarEvent[] = [];
-        let from = dataset.startTime;
-
-        while (collected.length < maxBars) {
-          const params = new URLSearchParams({
-            symbol: dataset.symbol,
-            timeframe: dataset.timeframe,
-            datasetId: dataset.id,
-            from: from.toString(),
-            limit: chunkSize.toString()
-          });
-          const res = await fetch(`${apiBase}/api/bars?${params.toString()}`, { signal: controller.signal });
-          if (!res.ok) throw new Error(`Failed to load bars (${res.status})`);
-          const payload = await res.json();
-          const rows = (Array.isArray(payload) ? payload : payload.bars ?? []) as BarEvent[];
-          const normalized = rows
-            .map((bar) => ({
-              ...bar,
-              timestamp: normalizeTimestamp(bar.timestamp) ?? dataset.startTime
-            }))
-            .filter((bar) => typeof bar.timestamp === "number" && Number.isFinite(bar.timestamp));
-
-          if (!normalized.length) break;
-          collected.push(...normalized);
-
-          if (collected.length >= maxBars) break;
-          if (normalized.length < chunkSize) break;
-          const lastTs = normalized[normalized.length - 1]?.timestamp;
-          if (!lastTs) break;
-          from = lastTs + 1;
-        }
-
-        setLocalBars(collected);
-        // Reset counters; actual playback progress is tracked as events arrive.
-        receivedCountRef.current = 0;
-        setState((prev) => ({ ...prev, loadedBars: 0 }));
-      } catch (err) {
-        if ((err as any)?.name === "AbortError") return;
-        // Keep state but note we couldn't preload
-        setState((prev) => ({ ...prev, error: (err as Error).message }));
-      }
-    };
-    loadLocalBars();
-
-    return () => {
-      controller.abort();
-    };
-  }, [dataset]);
-
-  const startLocalPlayback = () => {
-    if (!localBars.length) {
-      setState((prev) => ({ ...prev, status: "error", error: "No bars available for local playback" }));
-      return;
-    }
-    const tick = () => {
-      localIndexRef.current = Math.min(localBars.length - 1, localIndexRef.current + Math.max(1, Math.round(state.speed)));
-      const nextBar = localBars[localIndexRef.current];
-      if (!nextBar) {
-        pause();
-        return;
-      }
-      receivedCountRef.current = Math.max(receivedCountRef.current, localIndexRef.current + 1);
-      setBars(localBars.slice(0, localIndexRef.current + 1));
-      setEvents((prev) => [...prev.slice(-199), { ...nextBar, type: "BAR" } as MarketEvent]);
-      setState((prev) => ({
-        ...prev,
-        cursor: nextBar.timestamp,
-        loadedBars: Math.max(prev.loadedBars, receivedCountRef.current)
-      }));
-      if (localIndexRef.current >= localBars.length - 1) {
-        pause();
-      }
-    };
-
-    if (localTimerRef.current) clearInterval(localTimerRef.current);
-    // Speed multiplier = more bars per second; allow down to 10ms
-    const intervalMs = Math.max(10, 1000 / Math.max(1, state.speed));
-    localTimerRef.current = setInterval(tick, intervalMs);
-    setState((prev) => ({ ...prev, status: "playing", mode: "local", error: null }));
-  };
-
-  const stopLocalTimer = () => {
-    if (localTimerRef.current) {
-      clearInterval(localTimerRef.current);
-      localTimerRef.current = null;
-    }
-  };
-
-  const resetLocalCursor = (timestamp?: number) => {
-    if (!localBars.length) return;
-    const idx = timestamp
-      ? Math.max(
-          0,
-          localBars.findIndex((bar) => bar.timestamp >= timestamp)
-        )
-      : 0;
-    localIndexRef.current = idx;
-    const bar = localBars[idx];
-    setBars(localBars.slice(0, idx + 1));
-    setState((prev) => ({ ...prev, cursor: bar?.timestamp ?? dataset.startTime }));
-  };
+  // Note: removed REST preload/local fallback. Visualization now relies solely on websocket playback stream.
 
   useEffect(() => {
     setBars([]);
     setEvents([]);
     receivedCountRef.current = 0;
+    bufferedBarsRef.current = [];
+    pausedRef.current = false;
+    const { url: wsUrl, transport } = buildWsConfig(dataset, state.speed, indicatorSpecs);
+    transportRef.current = transport;
     setState((prev) => ({
       ...prev,
       status: "connecting",
       cursor: dataset.startTime,
       error: null,
       mode: "ws",
-      loadedBars: 0
+      transport,
+      loadedBars: 0,
+      indicators: []
     }));
     stopLocalTimer();
 
-    const wsUrl = buildWsUrl();
+    console.debug("[playback] connecting ws", wsUrl, "transport", transport, "indicators", indicatorSpecs);
     const socket = new WebSocket(wsUrl);
     socketRef.current = socket;
 
-    const sendInit = () => {
-          const payload = {
-            type: "INIT",
-            payload: {
-              symbol: dataset.symbol,
-              timeframe: dataset.timeframe,
-              datasetId: dataset.id,
-              from: dataset.startTime,
-              to: dataset.endTime,
-              speed: state.speed
-            }
+    const pushBars = (incoming: BarEvent[]) => {
+      setBars((prev) => {
+        const merged = [...prev, ...incoming];
+        const map = new Map<number, BarEvent>();
+        merged.forEach((bar) => {
+          map.set(bar.timestamp, bar);
+        });
+        return Array.from(map.values()).sort((a, b) => a.timestamp - b.timestamp);
+      });
+    };
+
+    const pushIndicatorValues = (timestamp: number, indicatorValues: Record<string, any> | undefined) => {
+      if (!indicatorSpecs.length || !indicatorValues) return;
+      setState((prev) => {
+        const nextIndicators = indicatorSpecs.map((spec) => {
+          const id = spec.id ?? spec.type;
+          const prevResult =
+            prev.indicators?.find((r) => r.spec.id === id || r.key === id) ??
+            prev.indicators?.find((r) => r.spec.type === spec.type);
+          const points = prevResult ? [...prevResult.points] : [];
+          const rawValue = (indicatorValues as any)[id] ?? (indicatorValues as any)[spec.type];
+          const value =
+            rawValue === undefined || rawValue === null || Number.isNaN(Number(rawValue))
+              ? null
+              : Number(rawValue);
+          points.push({ timestamp, values: { value } });
+          const period = Number((spec.params as any)?.period ?? 0);
+          return {
+            key: prevResult?.key ?? id,
+            label: prevResult?.label ?? spec.type.toUpperCase(),
+            spec,
+            warmup: Math.max(0, Math.floor(period) - 1),
+            points: points.slice(-5000)
           };
-          socket.send(JSON.stringify(payload));
+        });
+        return { ...prev, indicators: nextIndicators };
+      });
+    };
+
+    const flushBufferedBars = () => {
+      if (!bufferedBarsRef.current.length) return;
+      pushBars(bufferedBarsRef.current);
+      const last = bufferedBarsRef.current[bufferedBarsRef.current.length - 1];
+      bufferedBarsRef.current = [];
+      if (last) {
+        setState((prev) => ({
+          ...prev,
+          cursor: last.timestamp,
+          loadedBars: Math.max(prev.loadedBars, receivedCountRef.current)
+        }));
+      }
+    };
+    flushBufferedBarsRef.current = flushBufferedBars;
+
+    const sendInit = () => {
+      const payload = {
+        type: "INIT",
+        payload: {
+          symbol: dataset.symbol,
+          timeframe: dataset.timeframe,
+          datasetId: dataset.id,
+          from: dataset.startTime,
+          to: dataset.endTime,
+          speed: state.speed,
+          indicators: indicatorSpecs
+        }
+      };
+      socket.send(JSON.stringify(payload));
     };
 
     const handleMessage = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data);
+
+        if (transport === "candles") {
+          const raw = (data?.type === "CANDLE" ? data.payload : data) as Partial<BarEvent> & { dataset_id?: string };
+          if (!raw) return;
+          const ts = normalizeTimestamp((raw as any).timestamp) ?? dataset.startTime ?? Date.now();
+          const bar: BarEvent = {
+            type: "BAR",
+            symbol: raw.symbol ?? dataset.symbol,
+            timeframe: raw.timeframe ?? dataset.timeframe,
+            timestamp: ts,
+            open: Number(raw.open ?? 0),
+            high: Number(raw.high ?? 0),
+            low: Number(raw.low ?? 0),
+            close: Number(raw.close ?? 0),
+            volume: Number((raw as any).volume ?? 0)
+          };
+          pushIndicatorValues(ts, (raw as any).indicators);
+          receivedCountRef.current += 1;
+          const marketEvent: MarketEvent = { ...bar };
+          setEvents((prev) => [...prev.slice(-199), marketEvent]);
+          if (pausedRef.current) {
+            bufferedBarsRef.current.push(bar);
+          } else {
+            pushBars([bar]);
+            setState((prev) => ({
+              ...prev,
+              cursor: ts,
+              loadedBars: Math.max(prev.loadedBars, receivedCountRef.current),
+              status: prev.status === "connecting" ? "playing" : prev.status
+            }));
+          }
+          return;
+        }
+
+        // Debug: log incoming session state with indicators
+        if (data?.type === "SESSION_STATE" && data?.indicators) {
+          console.debug("[playback] received indicators", data.indicators.map((i: any) => ({ key: i.key, points: i.points?.length })));
+        }
         if (data.type === "BAR" || data.type === "TICK") {
           const marketEvent = data as MarketEvent;
           const ts = normalizeTimestamp(marketEvent.timestamp) ?? dataset.startTime ?? Date.now();
@@ -237,7 +271,8 @@ export function usePlaybackSession(dataset: Dataset): PlaybackSessionResult {
             ...prev,
             status: data.state ?? prev.status,
             speed: data.speed ?? prev.speed,
-            cursor: data.cursor ?? prev.cursor
+            cursor: data.cursor ?? prev.cursor,
+            indicators: data.indicators ?? prev.indicators
           }));
           return;
         }
@@ -247,6 +282,10 @@ export function usePlaybackSession(dataset: Dataset): PlaybackSessionResult {
     };
 
     socket.addEventListener("open", () => {
+      if (transport === "candles") {
+        setState((prev) => ({ ...prev, status: "playing", cursor: dataset.startTime }));
+        return;
+      }
       setState((prev) => ({ ...prev, status: "paused", cursor: dataset.startTime }));
       sendInit();
     });
@@ -254,11 +293,10 @@ export function usePlaybackSession(dataset: Dataset): PlaybackSessionResult {
     socket.addEventListener("error", () => {
       setState((prev) => ({
         ...prev,
-        status: "paused",
-        mode: "local",
-        error: "Playback websocket unavailable. Falling back to local playback."
+        status: "error",
+        mode: "ws",
+        error: "Playback websocket unavailable. Check API WS URL."
       }));
-      resetLocalCursor(dataset.startTime);
     });
     socket.addEventListener("close", () => {
       setState((prev) => ({ ...prev, status: "disconnected" }));
@@ -270,32 +308,36 @@ export function usePlaybackSession(dataset: Dataset): PlaybackSessionResult {
       stopLocalTimer();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataset.id, dataset.symbol, dataset.timeframe, dataset.startTime, dataset.endTime]);
+  }, [dataset.id, dataset.symbol, dataset.timeframe, dataset.startTime, dataset.endTime, JSON.stringify(indicatorSpecs)]);
 
   const sendMessage = (message: Record<string, unknown>) => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
-    socket.send(JSON.stringify(message));
-    return true;
+    try {
+      socket.send(JSON.stringify(message));
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   const play = () => {
-    if (state.mode === "local") {
-      startLocalPlayback();
+    if (transportRef.current === "candles") {
+      pausedRef.current = false;
+      sendMessage({ type: "PLAY" });
+      setState((prev) => ({ ...prev, status: "playing" }));
+      flushBufferedBarsRef.current();
       return;
     }
     if (sendMessage({ type: "PLAY" })) {
       setState((prev) => ({ ...prev, status: "playing" }));
-    } else {
-      // If websocket not open, fall back
-      setState((prev) => ({ ...prev, mode: "local" }));
-      startLocalPlayback();
     }
   };
 
   const pause = () => {
-    if (state.mode === "local") {
-      stopLocalTimer();
+    if (transportRef.current === "candles") {
+      pausedRef.current = true;
+      sendMessage({ type: "PAUSE" });
       setState((prev) => ({ ...prev, status: "paused" }));
       return;
     }
@@ -307,46 +349,25 @@ export function usePlaybackSession(dataset: Dataset): PlaybackSessionResult {
   const setSpeed = (speed: number) => {
     setState((prev) => ({ ...prev, speed }));
     sendMessage({ type: "SET_SPEED", speed });
-    if (state.mode === "local" && state.status === "playing") {
-      startLocalPlayback();
-    }
   };
 
   const seek = (timestamp: number) => {
     setState((prev) => ({ ...prev, cursor: timestamp }));
-    sendMessage({ type: "SEEK", timestamp });
-    if (state.mode === "local") {
-      stopLocalTimer();
-      resetLocalCursor(timestamp);
+    if (transportRef.current === "playback") {
+      sendMessage({ type: "SEEK", timestamp });
     }
   };
 
   const step = (direction: "forward" | "backward", size = 1) => {
-    sendMessage({ type: "STEP", direction, size });
-    if (state.mode === "local") {
-      stopLocalTimer();
-      const delta = direction === "forward" ? size : -size;
-      localIndexRef.current = Math.min(
-        Math.max(0, localIndexRef.current + delta),
-        Math.max(0, localBars.length - 1)
-      );
-      const bar = localBars[localIndexRef.current];
-      if (bar) {
-        setBars(localBars.slice(0, localIndexRef.current + 1));
-        setEvents((prev) => [...prev.slice(-199), { ...bar, type: "BAR" } as MarketEvent]);
-        setState((prev) => ({
-          ...prev,
-          cursor: bar.timestamp,
-          status: "paused",
-          loadedBars: Math.max(prev.loadedBars, localIndexRef.current + 1)
-        }));
-      }
+    if (transportRef.current === "playback") {
+      sendMessage({ type: "STEP", direction, size });
     }
   };
 
   return {
     bars,
     events,
+    indicators: state.indicators,
     status: state.status,
     speed: state.speed,
     cursor: state.cursor,

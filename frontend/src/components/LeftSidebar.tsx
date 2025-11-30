@@ -1,4 +1,4 @@
-import { Database, BarChart3, Play, Settings, FileText, Download, TrendingUp } from "lucide-react";
+import { Database, BarChart3, Play, Settings, FileText, Download, TrendingUp, X, LineChart } from "lucide-react";
 import { cn } from "./ui/utils";
 
 interface NavItem {
@@ -11,6 +11,8 @@ interface NavItem {
 interface LeftSidebarProps {
   currentSection: string;
   onSectionChange: (section: string) => void;
+  isMobileOpen?: boolean;
+  onCloseMobile?: () => void;
 }
 
 const navItems: NavItem[] = [
@@ -36,6 +38,11 @@ const navItems: NavItem[] = [
     icon: <BarChart3 className="w-5 h-5" />
   },
   {
+    id: "indicators",
+    label: "Indicators",
+    icon: <LineChart className="w-5 h-5" />
+  },
+  {
     id: "strategies",
     label: "Strategies",
     icon: <TrendingUp className="w-5 h-5" />
@@ -47,21 +54,37 @@ const navItems: NavItem[] = [
   }
 ];
 
-export function LeftSidebar({ currentSection, onSectionChange }: LeftSidebarProps) {
+export function LeftSidebar({ currentSection, onSectionChange, isMobileOpen, onCloseMobile }: LeftSidebarProps) {
   return (
-    <aside className="w-64 bg-[var(--bg-surface)] border-r border-[var(--border-subtle)] flex flex-col">
+    <aside
+      className={cn(
+        "bg-[var(--bg-surface)] border-r border-[var(--border-subtle)] flex flex-col transition-transform duration-200 ease-out z-40",
+        "fixed inset-y-0 left-0 w-[min(80vw,320px)] shadow-2xl lg:shadow-none lg:static lg:w-64",
+        isMobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+      )}
+      aria-label="Primary navigation"
+    >
       {/* Logo Section */}
-      <div className="h-16 px-6 flex items-center border-b border-[var(--border-subtle)]">
+      <div className="h-16 px-6 flex items-center justify-between border-b border-[var(--border-subtle)]">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-gradient-to-br from-[var(--accent-primary)] to-[var(--accent-secondary)] rounded-lg flex items-center justify-center neon-border">
             <TrendingUp className="w-5 h-5 text-white" />
           </div>
           <span className="text-xl text-[var(--text-primary)] font-cyber glow-primary">NanoTrade</span>
         </div>
+        {onCloseMobile && (
+          <button
+            onClick={onCloseMobile}
+            className="p-2 rounded-lg hover:bg-[var(--bg-elevated)] text-[var(--text-secondary)] transition-colors lg:hidden"
+            aria-label="Close navigation"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        )}
       </div>
 
       {/* Navigation Items */}
-      <nav className="flex-1 p-4 space-y-1">
+      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
         <div className="mb-4">
           <p className="px-3 text-xs text-[var(--text-muted)] mb-2 font-cyber">MAIN MENU</p>
         </div>

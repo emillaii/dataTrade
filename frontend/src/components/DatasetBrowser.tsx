@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "./ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { ChevronLeft, ChevronRight, Eye, Trash2, Clock3 } from "lucide-react";
+import { Badge } from "./ui/badge";
 import { useDatasets } from "../hooks/useDatasets";
 import { Dataset } from "../types/market";
 
@@ -34,13 +34,8 @@ export function DatasetBrowser({ onOpenDataset }: DatasetBrowserProps) {
         .concat([{ value: "UTC", label: "UTC (GMT+0)" }]),
     []
   );
-  const [symbol, setSymbol] = useState<string>("all");
-  const [timeframe, setTimeframe] = useState<string>("all");
-  const [startDate, setStartDate] = useState<string>("");
-  const [endDate, setEndDate] = useState<string>("");
   const [rowsPerPage, setRowsPerPage] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [appliedFilters, setAppliedFilters] = useState({});
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [editDataset, setEditDataset] = useState<Dataset | null>(null);
@@ -55,25 +50,10 @@ export function DatasetBrowser({ onOpenDataset }: DatasetBrowserProps) {
 
   const totalPages = Math.max(1, Math.ceil((total || datasets.length || 0) / rowsPerPage));
 
-  const handleApplyFilters = () => {
-    const parsedFilters: Record<string, unknown> = {
-      symbol: symbol === "all" ? undefined : symbol,
-      timeframe: timeframe === "all" ? undefined : timeframe,
-      start: startDate ? Date.parse(startDate) : undefined,
-      end: endDate ? Date.parse(endDate) : undefined,
-      limit: rowsPerPage,
-      offset: 0
-    };
-    setAppliedFilters(parsedFilters);
-    setCurrentPage(1);
-    refetch(parsedFilters);
-  };
-
   const handlePageChange = (nextPage: number) => {
     const clamped = Math.max(1, Math.min(totalPages, nextPage));
     setCurrentPage(clamped);
     refetch({
-      ...(appliedFilters as any),
       limit: rowsPerPage,
       offset: (clamped - 1) * rowsPerPage
     });
@@ -83,20 +63,10 @@ export function DatasetBrowser({ onOpenDataset }: DatasetBrowserProps) {
     setRowsPerPage(value);
     setCurrentPage(1);
     refetch({
-      ...(appliedFilters as any),
       limit: value,
       offset: 0
     });
   };
-
-  useEffect(() => {
-    refetch({
-      ...(appliedFilters as any),
-      limit: rowsPerPage,
-      offset: (currentPage - 1) * rowsPerPage
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const displayedDatasets = useMemo(() => datasets, [datasets]);
   const apiBase = import.meta.env.VITE_API_URL || "";
@@ -110,7 +80,6 @@ export function DatasetBrowser({ onOpenDataset }: DatasetBrowserProps) {
         throw new Error(text || `Failed to delete dataset (${res.status})`);
       }
       await refetch({
-        ...(appliedFilters as any),
         limit: rowsPerPage,
         offset: (currentPage - 1) * rowsPerPage
       });
@@ -123,93 +92,21 @@ export function DatasetBrowser({ onOpenDataset }: DatasetBrowserProps) {
   };
 
   return (
-    <div ref={containerRef} className="relative flex-1 flex overflow-hidden">
-      {/* Left Sidebar - Filters */}
-      <aside className="w-64 bg-[var(--bg-surface)] border-r border-[var(--border-subtle)] p-6 flex flex-col gap-6">
-        <div>
-          <h3 className="text-[var(--text-primary)] mb-4 font-cyber text-sm">FILTERS</h3>
-          
-          <div className="flex flex-col gap-4">
-            <div className="space-y-2">
-              <Label className="text-[var(--text-secondary)] text-xs">Symbol</Label>
-              <Select value={symbol} onValueChange={setSymbol}>
-                <SelectTrigger className="bg-[var(--bg-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)]">
-                  <SelectValue placeholder="All Symbols" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Symbols</SelectItem>
-                  <SelectItem value="EURUSD">EURUSD</SelectItem>
-                  <SelectItem value="GBPUSD">GBPUSD</SelectItem>
-                  <SelectItem value="USDJPY">USDJPY</SelectItem>
-                  <SelectItem value="GBPJPY">GBPJPY</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-[var(--text-secondary)] text-xs">Timeframe</Label>
-              <Select value={timeframe} onValueChange={setTimeframe}>
-                <SelectTrigger className="bg-[var(--bg-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)]">
-                  <SelectValue placeholder="All Timeframes" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Timeframes</SelectItem>
-                  <SelectItem value="TICK">TICK</SelectItem>
-                  <SelectItem value="M1">M1</SelectItem>
-                  <SelectItem value="M5">M5</SelectItem>
-                  <SelectItem value="M15">M15</SelectItem>
-                  <SelectItem value="H1">H1</SelectItem>
-                  <SelectItem value="D1">D1</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-[var(--text-secondary)] text-xs">Start Date</Label>
-              <Input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="bg-[var(--bg-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)]"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-[var(--text-secondary)] text-xs">End Date</Label>
-              <Input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="bg-[var(--bg-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)]"
-              />
-            </div>
-
-            <Button
-              className="w-full bg-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/90 text-white"
-              onClick={handleApplyFilters}
-              disabled={loading}
-            >
-              Apply Filters
-            </Button>
-          </div>
-        </div>
-
-        <div className="mt-auto p-4 bg-[var(--bg-elevated)] rounded-lg border border-[var(--border-subtle)]">
-          <p className="text-xs text-[var(--text-muted)] leading-relaxed">
-            <span className="text-[var(--text-secondary)] block mb-1">Imported datasets from Tick Data Suite</span>
-            Historical market data imported from CSV files. Select a dataset to start playback and backtesting.
-          </p>
-        </div>
-      </aside>
-
-      {/* Main Content - Dataset Table */}
-      <main className="flex-1 p-6 overflow-auto">
+    <div ref={containerRef} className="relative flex-1 flex flex-col overflow-hidden h-full w-full">
+      <main className="flex-1 p-4 sm:p-6 space-y-6 overflow-auto">
         <div className="bg-[var(--bg-surface)] rounded-lg border border-[var(--border-subtle)] shadow-lg">
-          <div className="p-6 border-b border-[var(--border-subtle)] flex items-center justify-between">
-            <h2 className="text-[var(--text-primary)] font-cyber text-xl glow-primary">AVAILABLE DATASETS</h2>
-            <Button variant="ghost" className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
-              Import new CSV
-            </Button>
+          <div className="p-6 border-b border-[var(--border-subtle)] flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <h2 className="text-[var(--text-primary)] font-cyber text-xl glow-primary">AVAILABLE DATASETS</h2>
+              <Badge className="hidden sm:inline-flex text-[var(--text-secondary)] bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">
+                {total || datasets.length || 0} total
+              </Badge>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                Import new CSV
+              </Button>
+            </div>
           </div>
 
           {error && (
@@ -223,103 +120,104 @@ export function DatasetBrowser({ onOpenDataset }: DatasetBrowserProps) {
             </div>
           )}
 
-          <Table>
-            <TableHeader>
-              <TableRow className="border-[var(--border-subtle)] hover:bg-transparent">
-                <TableHead className="text-[var(--text-secondary)] text-xs">Symbol</TableHead>
-                <TableHead className="text-[var(--text-secondary)] text-xs">Timeframe</TableHead>
-                <TableHead className="text-[var(--text-secondary)] text-xs">Timezone</TableHead>
-                <TableHead className="text-[var(--text-secondary)] text-xs">Start Time</TableHead>
-                <TableHead className="text-[var(--text-secondary)] text-xs">End Time</TableHead>
-                <TableHead className="text-[var(--text-secondary)] text-xs text-right">Rows</TableHead>
-                <TableHead className="text-[var(--text-secondary)] text-xs">Source File</TableHead>
-                <TableHead className="text-[var(--text-secondary)] text-xs text-right">Action</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {!loading && displayedDatasets.length === 0 && (
-                <TableRow className="border-[var(--border-subtle)]">
-                  <TableCell
-                    colSpan={8}
-                    className="text-center text-[var(--text-muted)] py-10"
+          <div className="overflow-x-auto">
+            <Table className="min-w-[720px]">
+              <TableHeader>
+                <TableRow className="border-[var(--border-subtle)] hover:bg-transparent">
+                  <TableHead className="text-[var(--text-secondary)] text-xs">Symbol</TableHead>
+                  <TableHead className="text-[var(--text-secondary)] text-xs">Timeframe</TableHead>
+                  <TableHead className="text-[var(--text-secondary)] text-xs">Timezone</TableHead>
+                  <TableHead className="text-[var(--text-secondary)] text-xs">Start Time</TableHead>
+                  <TableHead className="text-[var(--text-secondary)] text-xs">End Time</TableHead>
+                  <TableHead className="text-[var(--text-secondary)] text-xs text-right">Rows</TableHead>
+                  <TableHead className="text-[var(--text-secondary)] text-xs">Source File</TableHead>
+                  <TableHead className="text-[var(--text-secondary)] text-xs text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {!loading && displayedDatasets.length === 0 && (
+                  <TableRow className="border-[var(--border-subtle)]">
+                    <TableCell
+                      colSpan={8}
+                      className="text-center text-[var(--text-muted)] py-10"
+                    >
+                      No datasets found. Import a new CSV to get started.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {loading && (
+                  <TableRow className="border-[var(--border-subtle)]">
+                    <TableCell
+                      colSpan={8}
+                      className="text-center text-[var(--text-secondary)] py-10"
+                    >
+                      Loading datasets...
+                    </TableCell>
+                  </TableRow>
+                )}
+                {displayedDatasets.map((dataset, index) => (
+                  <TableRow
+                    key={dataset.id}
+                    className={`border-[var(--border-subtle)] ${index % 2 === 0 ? 'bg-transparent' : 'bg-[var(--bg-elevated)]/50'
+                      }`}
                   >
-                    No datasets found. Adjust your filters or import a new CSV.
-                  </TableCell>
-                </TableRow>
-              )}
-              {loading && (
-                <TableRow className="border-[var(--border-subtle)]">
-                  <TableCell
-                    colSpan={8}
-                    className="text-center text-[var(--text-secondary)] py-10"
-                  >
-                    Loading datasets...
-                  </TableCell>
-                </TableRow>
-              )}
-              {displayedDatasets.map((dataset, index) => (
-                <TableRow 
-                  key={dataset.id}
-                  className={`border-[var(--border-subtle)] ${
-                    index % 2 === 0 ? 'bg-transparent' : 'bg-[var(--bg-elevated)]/50'
-                  }`}
-                >
-                  <TableCell className="text-[var(--text-primary)]">{dataset.symbol}</TableCell>
-                  <TableCell className="text-[var(--text-primary)]">{dataset.timeframe}</TableCell>
-                 <TableCell className="text-[var(--text-secondary)]">{dataset.timezone || "UTC"}</TableCell>
-                  <TableCell className="text-[var(--text-secondary)] font-mono text-sm">
-                    {formatTimestamp(dataset.startTime)}
-                  </TableCell>
-                  <TableCell className="text-[var(--text-secondary)] font-mono text-sm">
-                    {formatTimestamp(dataset.endTime)}
-                  </TableCell>
-                  <TableCell className="text-[var(--text-primary)] font-mono text-sm text-right">
-                    {typeof dataset.rows === "number" ? dataset.rows.toLocaleString() : "—"}
-                  </TableCell>
-                  <TableCell className="text-[var(--text-muted)] text-sm">{dataset.sourceFile}</TableCell>
-                  <TableCell className="text-right space-x-2">
-                    <Button
-                      size="icon"
-                      variant="outline"
-                      className="border-[var(--border-subtle)] text-[var(--text-secondary)]"
-                      onClick={() => {
-                        setEditDataset(dataset);
-                        setEditTz(dataset.timezone || "UTC");
-                        setEditError(null);
-                      }}
-                      aria-label="Edit timezone"
-                    >
-                      <Clock3 className="w-4 h-4" />
-                    </Button>
-                    <Button 
-                      size="icon"
-                      className="bg-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/90 text-white"
-                      onClick={() => onOpenDataset(dataset)}
-                      disabled={loading}
-                      aria-label="Open dataset"
-                    >
-                      <Eye className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="outline"
-                      className="border-[var(--border-subtle)] text-[var(--trade-bearish)]"
-                      onClick={() => setConfirmId(dataset.id)}
-                      aria-label="Delete dataset"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                    <TableCell className="text-[var(--text-primary)]">{dataset.symbol}</TableCell>
+                    <TableCell className="text-[var(--text-primary)]">{dataset.timeframe}</TableCell>
+                    <TableCell className="text-[var(--text-secondary)]">{dataset.timezone || "UTC"}</TableCell>
+                    <TableCell className="text-[var(--text-secondary)] font-mono text-sm">
+                      {formatTimestamp(dataset.startTime)}
+                    </TableCell>
+                    <TableCell className="text-[var(--text-secondary)] font-mono text-sm">
+                      {formatTimestamp(dataset.endTime)}
+                    </TableCell>
+                    <TableCell className="text-[var(--text-primary)] font-mono text-sm text-right">
+                      {typeof dataset.rows === "number" ? dataset.rows.toLocaleString() : "—"}
+                    </TableCell>
+                    <TableCell className="text-[var(--text-muted)] text-sm">{dataset.sourceFile}</TableCell>
+                    <TableCell className="text-right space-x-2">
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        className="border-[var(--border-subtle)] text-[var(--text-secondary)]"
+                        onClick={() => {
+                          setEditDataset(dataset);
+                          setEditTz(dataset.timezone || "UTC");
+                          setEditError(null);
+                        }}
+                        aria-label="Edit timezone"
+                      >
+                        <Clock3 className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        className="bg-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/90 text-white"
+                        onClick={() => onOpenDataset(dataset)}
+                        disabled={loading}
+                        aria-label="Open dataset"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        className="border-[var(--border-subtle)] text-[var(--trade-bearish)]"
+                        onClick={() => setConfirmId(dataset.id)}
+                        aria-label="Delete dataset"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
 
-          <div className="p-4 border-t border-[var(--border-subtle)] flex items-center justify-between">
+          <div className="p-4 border-t border-[var(--border-subtle)] flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2">
               <span className="text-sm text-[var(--text-secondary)]">Rows per page:</span>
-              <Select 
-                value={rowsPerPage.toString()} 
+              <Select
+                value={rowsPerPage.toString()}
                 onValueChange={(value) => handleRowsPerPageChange(Number(value))}
               >
                 <SelectTrigger className="w-20 h-8 bg-[var(--bg-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)]">
@@ -395,7 +293,6 @@ export function DatasetBrowser({ onOpenDataset }: DatasetBrowserProps) {
               throw new Error(text || `Failed to update timezone (${res.status})`);
             }
             await refetch({
-              ...(appliedFilters as any),
               limit: rowsPerPage,
               offset: (currentPage - 1) * rowsPerPage
             });

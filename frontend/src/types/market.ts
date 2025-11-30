@@ -38,6 +38,19 @@ export interface Dataset {
   createdAt?: number;
 }
 
+export interface IndicatorPoint {
+  timestamp: number;
+  values: Record<string, number | null>;
+}
+
+export interface IndicatorResult {
+  key: string;
+  label: string;
+  warmup: number;
+  spec: { type: string; id?: string; params?: Record<string, string | number> };
+  points: IndicatorPoint[];
+}
+
 export interface DatasetQuery {
   symbol?: string;
   timeframe?: string;

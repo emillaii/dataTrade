@@ -5,10 +5,9 @@ import morgan from "morgan";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
-import { createServer } from "http";
-import { WebSocketServer } from "ws";
 import { parse } from "csv-parse";
-import { ensureSchema, fetchBars, insertCandles, insertDataset, listDatasets, pool, updateDatasetTimezone } from "./db.ts";
+import { ensureSchema, fetchBars, insertCandles, insertDataset, listDatasets, pool, updateDatasetTimezone } from "./db.js";
+import { computeIndicatorSeries, getIndicatorMeta } from "./indicators.js";
 dotenv.config();
 const app = express();
 const uploadDir = path.join(process.cwd(), "uploads");
@@ -87,18 +86,19 @@ app.post("/api/import", upload.single("file"), async (req, res) => {
     const candles = [];
     try {
         await ensureSchema();
-        const stream = fs.createReadStream(filePath).pipe(parse({
-            columns: (header) => {
+        const csvOptions = {
+            columns: ((header) => {
                 const lower = header.map((h) => String(h || "").toLowerCase().trim());
                 const known = ["timestamp", "time", "date", "open", "high", "low", "close", "volume", "symbol", "timeframe", "datetime"];
                 const hasKnown = lower.some((h) => known.includes(h));
                 return hasKnown ? header : false; // false => return rows as arrays
-            },
+            }),
             delimiter: [",", ";", "\t"],
             skip_empty_lines: true,
             relax_column_count: true,
             trim: true
-        }));
+        };
+        const stream = fs.createReadStream(filePath).pipe(parse(csvOptions));
         for await (const record of stream) {
             const row = record;
             let ts;
@@ -249,6 +249,37 @@ app.get("/api/bars", async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+app.get("/api/indicators/meta", (_req, res) => {
+    res.json({ indicators: getIndicatorMeta() });
+});
+app.post("/api/indicators/compute", async (req, res) => {
+    const { symbol, timeframe, datasetId, from, to, limit, indicators } = req.body ?? {};
+    if (!symbol || !timeframe) {
+        res.status(400).json({ error: "symbol and timeframe are required" });
+        return;
+    }
+    if (!Array.isArray(indicators) || indicators.length === 0) {
+        res.status(400).json({ error: "indicators array is required" });
+        return;
+    }
+    try {
+        const cappedLimit = Math.min(Math.max(Number(limit) || 1000, 1), 5000);
+        const bars = await fetchBars({
+            symbol: String(symbol),
+            timeframe: String(timeframe),
+            datasetId: datasetId ? String(datasetId) : undefined,
+            from: from ? Number(from) : undefined,
+            to: to ? Number(to) : undefined,
+            limit: cappedLimit
+        });
+        const results = indicators.map((spec) => computeIndicatorSeries(bars, spec));
+        res.json({ bars, indicators: results });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
 app.delete("/api/datasets/:id", async (req, res) => {
     const { id } = req.params;
     if (!id) {
@@ -293,148 +324,12 @@ app.patch("/api/datasets/:id/timezone", async (req, res) => {
     }
 });
 const port = Number(process.env.PORT) || 4000;
-const host = process.env.HOST || "127.0.0.1";
-const server = createServer(app);
-const broadcastState = (ws, session) => {
-    const payload = {
-        type: "SESSION_STATE",
-        state: session.status,
-        speed: session.speed,
-        cursor: session.bars[session.cursor]?.timestamp ?? null
-    };
-    ws.send(JSON.stringify(payload));
-};
-const sendBar = (ws, bar) => {
-    ws.send(JSON.stringify({
-        ...bar,
-        type: "BAR",
-        timestamp: bar.timestamp
-    }));
-};
-const wss = new WebSocketServer({ server, path: "/ws/playback" });
-wss.on("connection", (ws) => {
-    const session = {
-        bars: [],
-        cursor: 0,
-        speed: 1,
-        status: "paused",
-        timer: null
-    };
-    const clearTimer = () => {
-        if (session.timer) {
-            clearInterval(session.timer);
-            session.timer = null;
-        }
-    };
-    const startTimer = () => {
-        clearTimer();
-        if (!session.bars.length)
-            return;
-        session.status = "playing";
-        // Allow very fast playback; clamp at 5ms and send multiple bars per tick.
-        const intervalMs = Math.max(5, 1000 / Math.max(0.25, session.speed));
-        const barsPerTick = Math.max(1, Math.round(session.speed * 2));
-        session.timer = setInterval(() => {
-            if (session.cursor >= session.bars.length) {
-                clearTimer();
-                session.status = "paused";
-                broadcastState(ws, session);
-                return;
-            }
-            for (let i = 0; i < barsPerTick && session.cursor < session.bars.length; i++) {
-                const bar = session.bars[session.cursor];
-                sendBar(ws, bar);
-                session.cursor = Math.min(session.cursor + 1, session.bars.length);
-            }
-            if (session.cursor >= session.bars.length) {
-                clearTimer();
-                session.status = "paused";
-            }
-            broadcastState(ws, session);
-        }, intervalMs);
-    };
-    ws.on("message", async (raw) => {
-        let message = null;
-        try {
-            message = JSON.parse(raw.toString());
-        }
-        catch (err) {
-            ws.send(JSON.stringify({ type: "ERROR", error: "Invalid message" }));
-            return;
-        }
-        if (message.type === "INIT") {
-            try {
-                const { symbol, timeframe, datasetId, from, to, speed } = message.payload;
-                const bars = await fetchBars({ symbol, timeframe, datasetId, from, to, limit: 5000 });
-                session.bars = bars;
-                session.cursor = 0;
-                session.speed = speed ?? 1;
-                session.status = "paused";
-                broadcastState(ws, session);
-                if (session.bars.length === 0) {
-                    ws.send(JSON.stringify({ type: "ERROR", error: "No bars found for requested range." }));
-                }
-            }
-            catch (err) {
-                ws.send(JSON.stringify({ type: "ERROR", error: err.message }));
-            }
-            return;
-        }
-        if (message.type === "PLAY") {
-            if (session.bars.length === 0) {
-                ws.send(JSON.stringify({ type: "ERROR", error: "No bars loaded. Send INIT first." }));
-                return;
-            }
-            startTimer();
-            return;
-        }
-        if (message.type === "PAUSE") {
-            clearTimer();
-            session.status = "paused";
-            broadcastState(ws, session);
-            return;
-        }
-        if (message.type === "SET_SPEED") {
-            session.speed = Math.max(0.25, message.speed || 1);
-            if (session.status === "playing") {
-                startTimer();
-            }
-            else {
-                broadcastState(ws, session);
-            }
-            return;
-        }
-        if (message.type === "SEEK") {
-            const idx = session.bars.findIndex((b) => b.timestamp >= message.timestamp);
-            session.cursor = idx >= 0 ? idx : session.bars.length - 1;
-            clearTimer();
-            session.status = "paused";
-            const bar = session.bars[session.cursor];
-            if (bar)
-                sendBar(ws, bar);
-            broadcastState(ws, session);
-            return;
-        }
-        if (message.type === "STEP") {
-            const delta = message.direction === "forward" ? (message.size ?? 1) : -(message.size ?? 1);
-            session.cursor = Math.min(Math.max(0, session.cursor + delta), Math.max(0, session.bars.length - 1));
-            clearTimer();
-            session.status = "paused";
-            const bar = session.bars[session.cursor];
-            if (bar)
-                sendBar(ws, bar);
-            broadcastState(ws, session);
-            return;
-        }
-    });
-    ws.on("close", () => {
-        clearTimer();
-    });
-});
+// Bind to all interfaces by default so ws/http work for localhost/127.0.0.1/::1
+const host = process.env.HOST || "0.0.0.0";
 const start = async () => {
     try {
         await ensureSchema();
-        server.listen(port, host, () => {
+        app.listen(port, host, () => {
             console.log(`API server listening on ${host}:${port}`);
         });
     }
