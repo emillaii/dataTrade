@@ -9,6 +9,7 @@ import { Analytics } from "./components/Analytics";
 import { PlaybackChart } from "./components/PlaybackChart";
 import { IndicatorLab } from "./components/IndicatorLab";
 import { Dataset } from "./types/market";
+import type { IndicatorSpec } from "./types/indicator";
 import "./styles/globals.css";
 
 type Section = "data-sync" | "datasets" | "simulation" | "analytics" | "indicators" | "strategies" | "reports";
@@ -17,6 +18,7 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentSection, setCurrentSection] = useState<Section>("data-sync");
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null);
+  const [initialIndicators, setInitialIndicators] = useState<IndicatorSpec[]>([]);
   const [isPlaybackView, setIsPlaybackView] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
@@ -26,6 +28,7 @@ export default function App() {
 
   const handleOpenDataset = (dataset: Dataset) => {
     setSelectedDataset(dataset);
+    setInitialIndicators([]);
     setIsPlaybackView(true);
     setIsSidebarOpen(false);
   };
@@ -33,6 +36,13 @@ export default function App() {
   const handleBackToBrowser = () => {
     setIsPlaybackView(false);
     setSelectedDataset(null);
+    setInitialIndicators([]);
+  };
+
+  const handleStartSimulation = (dataset: Dataset, indicators: IndicatorSpec[]) => {
+    setSelectedDataset(dataset);
+    setInitialIndicators(indicators);
+    setIsPlaybackView(true);
   };
 
   const handleSectionChange = (section: string) => {
@@ -71,6 +81,7 @@ export default function App() {
     return (
       <PlaybackChart
         dataset={selectedDataset}
+        initialIndicators={initialIndicators}
         onBack={handleBackToBrowser}
       />
     );
@@ -102,7 +113,7 @@ export default function App() {
         
         {currentSection === "data-sync" && <DataSync />}
         {currentSection === "datasets" && <DatasetBrowser onOpenDataset={handleOpenDataset} />}
-        {currentSection === "simulation" && <Simulation />}
+        {currentSection === "simulation" && <Simulation onStartSimulation={handleStartSimulation} />}
         {currentSection === "analytics" && <Analytics />}
         {currentSection === "indicators" && <IndicatorLab />}
         {currentSection === "strategies" && (

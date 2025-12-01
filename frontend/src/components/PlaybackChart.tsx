@@ -14,6 +14,8 @@ import {
   TrendingDown,
   ArrowLeft,
   ArrowRight,
+  ZoomIn,
+  ZoomOut,
   LineChart,
   Settings2,
   Loader2,
@@ -37,6 +39,7 @@ interface CandleData {
 interface PlaybackChartProps {
   dataset: Dataset;
   onBack: () => void;
+  initialIndicators?: IndicatorSpec[];
 }
 
 interface IndicatorSelection {
@@ -104,7 +107,7 @@ const describeEvent = (event: MarketEvent) => {
   return `${event.symbol} bid:${event.bid.toFixed(5)} ask:${event.ask.toFixed(5)}`;
 };
 
-export function PlaybackChart({ dataset, onBack }: PlaybackChartProps) {
+export function PlaybackChart({ dataset, onBack, initialIndicators = [] }: PlaybackChartProps) {
   const [selectedTimeframe, setSelectedTimeframe] = useState(dataset.timeframe);
   const [visibleCandles, setVisibleCandles] = useState(120);
   const [viewOffset, setViewOffset] = useState(0); // 0 = live, >0 = historical pan
@@ -116,6 +119,7 @@ export function PlaybackChart({ dataset, onBack }: PlaybackChartProps) {
   const [indicatorLoading, setIndicatorLoading] = useState(false);
   const [indicatorError, setIndicatorError] = useState<string | null>(null);
   const [isIndicatorPanelOpen, setIsIndicatorPanelOpen] = useState(false);
+  const [showTooltip, setShowTooltip] = useState(true);
   const isDraggingRef = useRef(false);
   const dragStartXRef = useRef(0);
   const dragStartOffsetRef = useRef(0);
@@ -154,6 +158,22 @@ export function PlaybackChart({ dataset, onBack }: PlaybackChartProps) {
   useEffect(() => {
     setSelectedTimeframe(dataset.timeframe);
   }, [dataset.timeframe]);
+
+  // Prevent browser back from leaving the app while in playback; route back into app instead.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handlePopState = (event: PopStateEvent) => {
+      event.preventDefault();
+      onBack();
+      // Re-push a state entry so subsequent back presses stay in-app.
+      window.history.pushState({ playback: true }, "");
+    };
+    window.history.pushState({ playback: true }, "");
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [onBack]);
 
   useEffect(() => {
     const el = chartContainerRef.current;
@@ -208,6 +228,29 @@ export function PlaybackChart({ dataset, onBack }: PlaybackChartProps) {
       return next;
     });
   }, [indicatorMeta, selectedIndicatorType]);
+
+  useEffect(() => {
+    if (!initialIndicators.length) return;
+    setIndicatorSelections(
+      initialIndicators.map((spec, idx) => {
+        const meta = indicatorMeta.find((m) => m.type === spec.type);
+        const chosenColor = spec.color || indicatorColors[idx % indicatorColors.length];
+        return {
+          id: spec.id ?? `${spec.type}-${idx}`,
+          spec,
+          color: chosenColor,
+          label: meta?.label ?? spec.type.toUpperCase()
+        };
+      })
+    );
+    setSelectedIndicatorType((prev) => prev || initialIndicators[0]?.type || "");
+    const firstMeta = indicatorMeta.find((m) => m.type === initialIndicators[0]?.type);
+    const defaults: Record<string, number | string> = {};
+    firstMeta?.params.forEach((p) => {
+      if (p.default !== undefined) defaults[p.name] = p.default;
+    });
+    setIndicatorParams((prev) => ({ ...defaults, ...prev }));
+  }, [initialIndicators, indicatorMeta]);
 
   // No REST fallback; rely solely on websocket playback for visualization.
 
@@ -340,23 +383,26 @@ export function PlaybackChart({ dataset, onBack }: PlaybackChartProps) {
       ...(indicatorValues.length ? indicatorValues : [-Infinity])
     );
     const priceRange = priceMax - priceMin || 1;
-    const yScale = (price: number) => {
-      return (
-        padding.top +
-        (1 - (price - priceMin) / priceRange) * (chartHeight - padding.top - padding.bottom)
-      );
-    };
+      const yScale = (price: number) => {
+        return (
+          padding.top +
+          (1 - (price - priceMin) / priceRange) * (chartHeight - padding.top - padding.bottom)
+        );
+      };
 
-    const barWidth = (chartWidth - padding.left - padding.right) / displayData.length;
-    barWidthRef.current = barWidth;
+      const barWidth = (chartWidth - padding.left - padding.right) / displayData.length;
+      barWidthRef.current = barWidth;
 
-    const labelInterval = Math.max(1, Math.ceil(displayData.length / 12));
+      const labelInterval = Math.max(1, Math.ceil(displayData.length / 12));
 
-    const handleHoverMove = (e: React.MouseEvent<SVGSVGElement, MouseEvent>) => {
-      if (!displayData.length || isDraggingRef.current) return;
-      const rect = e.currentTarget.getBoundingClientRect();
-      const localX = e.clientX - rect.left;
-      const barWidth = barWidthRef.current || 1;
+      const toolbarButtonClass =
+        "bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[var(--text-primary)] hover:bg-[var(--accent-primary)]/15 hover:border-[var(--accent-primary)]/40 shadow-sm";
+
+      const handleHoverMove = (e: React.MouseEvent<SVGSVGElement, MouseEvent>) => {
+        if (!displayData.length || isDraggingRef.current) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const localX = e.clientX - rect.left;
+        const barWidth = barWidthRef.current || 1;
       const clampedX = Math.max(padding.left, Math.min(chartWidth - padding.right, localX));
       const idx = Math.min(
         displayData.length - 1,
@@ -374,7 +420,7 @@ export function PlaybackChart({ dataset, onBack }: PlaybackChartProps) {
         className="relative w-full h-full bg-[var(--bg-surface)]"
         style={{
           minHeight: "500px",
-          cursor: isDraggingRef.current ? "grabbing" : "grab"
+          cursor: isDraggingRef.current ? "grabbing" : "crosshair"
         }}
         onMouseDown={(e) => {
           isDraggingRef.current = true;
@@ -396,6 +442,55 @@ export function PlaybackChart({ dataset, onBack }: PlaybackChartProps) {
           isDraggingRef.current = false;
         }}
       >
+        <div className="absolute left-3 top-3 z-10 flex flex-col gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className={`h-9 w-9 p-0 ${toolbarButtonClass}`}
+            onClick={() => handlePan("left")}
+            aria-label="Pan left"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className={`h-9 w-9 p-0 ${toolbarButtonClass}`}
+            onClick={() => handlePan("right")}
+            aria-label="Pan right"
+          >
+            <ArrowRight className="w-4 h-4" />
+          </Button>
+          <div className="h-px w-full bg-[var(--border-subtle)]" />
+          <Button
+            size="sm"
+            variant="outline"
+            className={`h-9 w-9 p-0 ${toolbarButtonClass}`}
+            onClick={() => handleZoom("in")}
+            aria-label="Zoom in"
+          >
+            <ZoomIn className="w-4 h-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className={`h-9 w-9 p-0 ${toolbarButtonClass}`}
+            onClick={() => handleZoom("out")}
+            aria-label="Zoom out"
+          >
+            <ZoomOut className="w-4 h-4" />
+          </Button>
+          <div className="h-px w-full bg-[var(--border-subtle)]" />
+          <Button
+            size="sm"
+            variant="outline"
+            className={`h-9 w-9 p-0 ${toolbarButtonClass}`}
+            onClick={() => setShowTooltip((v) => !v)}
+            aria-label={showTooltip ? "Hide tooltip" : "Show tooltip"}
+          >
+            {showTooltip ? <X className="w-4 h-4" /> : <LineChart className="w-4 h-4" />}
+          </Button>
+        </div>
         <svg
           width="100%"
           height="100%"
@@ -560,11 +655,11 @@ export function PlaybackChart({ dataset, onBack }: PlaybackChartProps) {
             );
           })}
         </svg>
-        {hovered && (
+        {hovered && showTooltip && (
           <div
             className="absolute z-10 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-md shadow-lg p-3 text-xs font-mono text-[var(--text-primary)] pointer-events-none"
             style={{
-              left: 12,
+              left: 72,
               top: 12
             }}
           >
@@ -593,6 +688,23 @@ export function PlaybackChart({ dataset, onBack }: PlaybackChartProps) {
   const handleSpeedChange = (value: string) => {
     const numeric = Number(value.replace("x", "")) || 1;
     updateSpeed(numeric);
+  };
+
+  const panStep = Math.max(1, Math.floor(visibleCandles / 4));
+  const handlePan = (direction: "left" | "right") => {
+    const delta = direction === "left" ? panStep : -panStep;
+    setViewOffset((prev) => clampOffset(prev + delta));
+  };
+
+  const handleZoom = (direction: "in" | "out") => {
+    setVisibleCandles((prev) => {
+      const change = Math.max(5, Math.floor(prev * 0.2));
+      const next =
+        direction === "in"
+          ? Math.max(10, prev - change)
+          : Math.min(Math.max(visibleCandles, candleData.length), prev + change);
+      return next;
+    });
   };
 
   const selectedIndicatorMeta = useMemo(
@@ -663,7 +775,7 @@ export function PlaybackChart({ dataset, onBack }: PlaybackChartProps) {
         }
       />
 
-      <main className="flex-1 p-6 overflow-auto space-y-4">
+      <main className="flex-1 p-6 overflow-auto space-y-4 playback-page">
         {sessionError && (
           <div className="bg-[var(--bg-elevated)] border border-[var(--trade-bearish)]/50 text-[var(--trade-bearish)] rounded-md px-4 py-2">
             {sessionError}
@@ -868,13 +980,14 @@ export function PlaybackChart({ dataset, onBack }: PlaybackChartProps) {
               </Button>
               <Button
                 size="sm"
-                className={`w-9 h-9 p-0 ${
+                className={`w-10 h-10 p-0 rounded-full ${
                   status === "playing"
                     ? "bg-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/90"
                     : "bg-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/90"
                 } text-white`}
                 onClick={handlePlayToggle}
                 disabled={status === "connecting" || status === "error"}
+                aria-label={status === "playing" ? "Pause playback" : "Play playback"}
               >
                 {status === "playing" ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
               </Button>

@@ -1,6 +1,6 @@
 import asyncio
-import json
 import os
+import json
 from typing import List, Optional
 
 import dotenv
@@ -8,6 +8,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
+from starlette.websockets import WebSocketState
 
 # Load .env if present so local runs pick up DATABASE_URL and tuning flags.
 dotenv.load_dotenv()
@@ -233,7 +234,15 @@ async def _handle_candle_stream(ws: WebSocket):
                         payload["indicators"] = indicator_payload
 
                     ts = payload["timestamp"]
-                    await ws.send_json({"type": "CANDLE", "payload": payload})
+                    if ws.client_state != WebSocketState.CONNECTED:
+                        rows = []
+                        break
+                    try:
+                        await ws.send_json({"type": "CANDLE", "payload": payload})
+                    except RuntimeError:
+                        # Socket already closed; exit loop quietly.
+                        rows = []
+                        break
 
                     # Compute delay based on timestamp deltas and current speed.
                     if last_sent_ts is not None and ts is not None:
@@ -249,11 +258,16 @@ async def _handle_candle_stream(ws: WebSocket):
                     last_timestamp = ts
                     last_sent_ts = ts
 
+                if ws.client_state != WebSocketState.CONNECTED:
+                    break
                 # small guard to avoid tight loop when rows exist
                 await asyncio.sleep(0)
             else:
                 await asyncio.sleep(POLL_INTERVAL_SECONDS)
     except WebSocketDisconnect:
+        return
+    except RuntimeError:
+        # Socket closed while sending; just exit gracefully.
         return
     finally:
         ctrl_task.cancel()

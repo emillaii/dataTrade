@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "./ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -8,6 +8,7 @@ import { ChevronLeft, ChevronRight, Eye, Trash2, Clock3 } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { useDatasets } from "../hooks/useDatasets";
 import { Dataset } from "../types/market";
+import { Input } from "./ui/input";
 
 interface DatasetBrowserProps {
   onOpenDataset: (dataset: Dataset) => void;
@@ -42,6 +43,7 @@ export function DatasetBrowser({ onOpenDataset }: DatasetBrowserProps) {
   const [editTz, setEditTz] = useState<string>("");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [search, setSearch] = useState<string>("");
 
   const { datasets, total, loading, error, refetch, refresh } = useDatasets({
     limit: rowsPerPage,
@@ -70,6 +72,18 @@ export function DatasetBrowser({ onOpenDataset }: DatasetBrowserProps) {
 
   const displayedDatasets = useMemo(() => datasets, [datasets]);
   const apiBase = import.meta.env.VITE_API_URL || "";
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setCurrentPage(1);
+      refetch({
+        limit: rowsPerPage,
+        offset: 0,
+        symbol: search.trim() || undefined
+      });
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [search, rowsPerPage, refetch]);
 
   const handleDelete = async (id: string) => {
     setDeleteError(null);
@@ -102,7 +116,13 @@ export function DatasetBrowser({ onOpenDataset }: DatasetBrowserProps) {
                 {total || datasets.length || 0} total
               </Badge>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <Input
+                placeholder="Filter by symbol/name"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="bg-[var(--bg-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)] w-full sm:w-64"
+              />
               <Button variant="ghost" className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
                 Import new CSV
               </Button>

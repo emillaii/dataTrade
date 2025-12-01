@@ -257,3 +257,150 @@
 html {
   font-size: var(--font-size);
 }
+
+/* Theme Ant Design modal used for indicator editing so text stands out on dark surface */
+.indicator-modal .ant-modal-content,
+.indicator-modal .ant-modal-header,
+.indicator-modal .ant-modal-body,
+.indicator-modal .ant-modal-footer {
+  color: var(--text-primary);
+  background-color: var(--bg-app);
+  border-color: var(--border-subtle);
+}
+
+.indicator-modal .ant-modal-container {
+  background-color: var(--bg-app);
+}
+
+.indicator-modal .ant-modal-content {
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.4);
+}
+
+.indicator-modal .ant-modal-title {
+  font-family: 'Rajdhani', -apple-system, BlinkMacSystemFont, sans-serif;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+}
+
+.indicator-modal .ant-modal-close {
+  color: var(--text-secondary);
+}
+
+.indicator-modal .ant-modal-close:hover {
+  color: var(--text-primary);
+}
+
+.ant-modal-root .ant-modal-mask {
+  background-color: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+/* Ensure form controls stay readable on dark backgrounds */
+input,
+textarea,
+select {
+  color: var(--text-primary);
+  background-color: var(--bg-surface);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-select-selector {
+  color: var(--text-primary) !important;
+  background-color: var(--bg-surface) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+.ant-select-selection-item,
+.ant-select-selection-placeholder,
+.ant-select-arrow,
+.ant-select-item,
+.ant-select-item-option-content,
+.ant-select-dropdown {
+  color: var(--text-primary) !important;
+  background-color: var(--bg-surface) !important;
+}
+
+.ant-select-selection-placeholder {
+  color: var(--text-muted) !important;
+}
+
+/* Make Ant Design buttons readable on dark background */
+.ant-btn {
+  color: var(--text-primary) !important;
+  background-color: var(--bg-elevated) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+.ant-btn:hover,
+.ant-btn:focus {
+  color: var(--text-primary) !important;
+  background-color: color-mix(in srgb, var(--bg-elevated) 80%, #ffffff 20%) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+.ant-btn-primary {
+  color: #ffffff !important;
+  background-color: var(--accent-primary) !important;
+  border-color: var(--accent-primary) !important;
+}
+
+.ant-btn-primary:hover,
+.ant-btn-primary:focus {
+  color: #ffffff !important;
+  background-color: color-mix(in srgb, var(--accent-primary) 90%, #ffffff 10%) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 90%, #ffffff 10%) !important;
+}
+
+/* Radix select (dataset/indicator boxes) readability */
+[data-slot="select-trigger"],
+[data-slot="select-content"] {
+  color: var(--text-primary);
+  background-color: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+[data-slot="select-trigger"] svg {
+  color: var(--text-muted);
+}
+
+[data-slot="select-item"] {
+  color: var(--text-primary);
+  background-color: var(--bg-surface);
+}
+
+[data-slot="select-item"][data-highlighted] {
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+[data-slot="select-value"][data-placeholder] {
+  color: var(--text-muted);
+}
+
+/* Ensure custom buttons keep readable text, even when disabled */
+[data-slot="button"] {
+  color: var(--text-primary);
+}
+
+[data-slot="button"]:disabled {
+  opacity: 0.85;
+  color: var(--text-primary);
+}
+
+/* Playback page buttons and controls visibility */
+.playback-page button,
+.playback-page [data-slot="button"] {
+  color: var(--text-primary) !important;
+}
+
+.playback-page button:hover {
+  color: var(--text-primary) !important;
+}

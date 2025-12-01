@@ -22,6 +22,7 @@ export interface IndicatorSpec {
   type: string;
   id?: string;
   params?: Record<string, string | number>;
+  color?: string;
 }
 
 export interface IndicatorPoint {
